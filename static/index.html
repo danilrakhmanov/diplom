@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SportStore IS</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">SS</span>
+      <span>SportStore IS</span>
+    </div>
+    <nav class="nav" aria-label="Разделы">
+      <button class="nav-button active" data-view="dashboard">Обзор</button>
+      <button class="nav-button" data-view="catalog">Каталог</button>
+      <button class="nav-button" data-view="orders">Продажи</button>
+      <button class="nav-button" data-view="customers">Клиенты</button>
+    </nav>
+  </aside>
+
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Информационная система</p>
+        <h1>Магазин спортивных товаров</h1>
+      </div>
+      <button id="refreshButton" class="icon-button" title="Обновить данные" aria-label="Обновить данные">↻</button>
+    </header>
+
+    <section id="dashboard" class="view active">
+      <div class="metrics">
+        <article class="metric"><span>Товаров</span><strong id="statProducts">0</strong></article>
+        <article class="metric"><span>Клиентов</span><strong id="statCustomers">0</strong></article>
+        <article class="metric"><span>Заказов</span><strong id="statOrders">0</strong></article>
+        <article class="metric"><span>Выручка</span><strong id="statRevenue">0 ₽</strong></article>
+      </div>
+      <div class="split">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Популярные товары</h2>
+          </div>
+          <div id="topProducts" class="list"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Низкие остатки</h2>
+          </div>
+          <div id="lowStock" class="list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="catalog" class="view">
+      <div class="toolbar">
+        <input id="productSearch" type="search" placeholder="Поиск товара или бренда">
+        <select id="categoryFilter"></select>
+        <button id="openProductForm">Добавить товар</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Товар</th>
+              <th>Категория</th>
+              <th>Бренд</th>
+              <th>Цена</th>
+              <th>Остаток</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="productsTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="orders" class="view">
+      <div class="order-layout">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Новая продажа</h2>
+          </div>
+          <label>Покупатель
+            <select id="orderCustomer"></select>
+          </label>
+          <div id="cart" class="cart"></div>
+          <div class="total-row">
+            <span>Итого</span>
+            <strong id="cartTotal">0 ₽</strong>
+          </div>
+          <button id="submitOrder" class="primary">Оформить заказ</button>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>История заказов</h2>
+          </div>
+          <div id="ordersList" class="list"></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="customers" class="view">
+      <div class="customer-layout">
+        <form id="customerForm" class="panel form">
+          <div class="panel-head">
+            <h2>Новый клиент</h2>
+          </div>
+          <label>ФИО <input name="full_name" required></label>
+          <label>Телефон <input name="phone" required></label>
+          <label>Email <input name="email" type="email"></label>
+          <button class="primary">Сохранить</button>
+        </form>
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Клиентская база</h2>
+          </div>
+          <div id="customersList" class="list"></div>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="productDialog">
+    <form id="productForm" class="dialog-form">
+      <div class="panel-head">
+        <h2>Добавить товар</h2>
+        <button type="button" id="closeProductForm" class="icon-button" title="Закрыть" aria-label="Закрыть">×</button>
+      </div>
+      <label>Название <input name="name" required></label>
+      <label>Категория <input name="category" list="categoryOptions" required></label>
+      <datalist id="categoryOptions"></datalist>
+      <label>Бренд <input name="brand" required></label>
+      <div class="two">
+        <label>Цена <input name="price" type="number" min="0" step="0.01" required></label>
+        <label>Остаток <input name="stock" type="number" min="0" step="1" required></label>
+      </div>
+      <label>Описание <textarea name="description" rows="3"></textarea></label>
+      <button class="primary">Сохранить товар</button>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>
