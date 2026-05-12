@@ -60,8 +60,13 @@ def init_db():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                status TEXT NOT NULL DEFAULT 'Новый',
+                status TEXT NOT NULL DEFAULT 'Оформлен',
+                subtotal REAL NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
+                discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0),
                 total REAL NOT NULL DEFAULT 0 CHECK (total >= 0),
+                bonus_spent INTEGER NOT NULL DEFAULT 0 CHECK (bonus_spent >= 0),
+                bonus_added INTEGER NOT NULL DEFAULT 0 CHECK (bonus_added >= 0),
+                closed_at TEXT,
                 FOREIGN KEY (customer_id) REFERENCES customers(id)
             );
 
@@ -77,8 +82,26 @@ def init_db():
             """
         )
 
+        migrate_db(db)
+
         if db.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
             seed_database(db)
+
+
+def migrate_db(db):
+    order_columns = {row["name"] for row in db.execute("PRAGMA table_info(orders)")}
+    migrations = {
+        "subtotal": "ALTER TABLE orders ADD COLUMN subtotal REAL NOT NULL DEFAULT 0 CHECK (subtotal >= 0)",
+        "discount": "ALTER TABLE orders ADD COLUMN discount REAL NOT NULL DEFAULT 0 CHECK (discount >= 0)",
+        "bonus_spent": "ALTER TABLE orders ADD COLUMN bonus_spent INTEGER NOT NULL DEFAULT 0 CHECK (bonus_spent >= 0)",
+        "bonus_added": "ALTER TABLE orders ADD COLUMN bonus_added INTEGER NOT NULL DEFAULT 0 CHECK (bonus_added >= 0)",
+        "closed_at": "ALTER TABLE orders ADD COLUMN closed_at TEXT",
+    }
+    for column, statement in migrations.items():
+        if column not in order_columns:
+            db.execute(statement)
+    db.execute("UPDATE orders SET subtotal = total WHERE subtotal = 0 AND total > 0")
+    db.execute("UPDATE orders SET status = 'Оформлен' WHERE status = 'Новый'")
 
 
 def seed_database(db):
@@ -161,15 +184,18 @@ def dashboard():
             products=db.execute("SELECT COUNT(*) FROM products").fetchone()[0],
             customers=db.execute("SELECT COUNT(*) FROM customers").fetchone()[0],
             orders=db.execute("SELECT COUNT(*) FROM orders").fetchone()[0],
-            revenue=db.execute("SELECT COALESCE(SUM(total), 0) FROM orders").fetchone()[0],
+            revenue=db.execute(
+                "SELECT COALESCE(SUM(total), 0) FROM orders WHERE status NOT IN ('Отменен', 'Возврат')"
+            ).fetchone()[0],
             low_stock=db.execute("SELECT COUNT(*) FROM products WHERE stock <= 10").fetchone()[0],
         )
         top_products = rows_to_dicts(
             db.execute(
                 """
-                SELECT p.name, COALESCE(SUM(oi.quantity), 0) AS sold
+                SELECT p.name, COALESCE(SUM(CASE WHEN o.id IS NOT NULL THEN oi.quantity ELSE 0 END), 0) AS sold
                 FROM products p
                 LEFT JOIN order_items oi ON oi.product_id = p.id
+                LEFT JOIN orders o ON o.id = oi.order_id AND o.status NOT IN ('Отменен', 'Возврат')
                 GROUP BY p.id
                 ORDER BY sold DESC, p.name
                 LIMIT 5
@@ -232,7 +258,13 @@ def create_order(payload):
         final_total = total - bonus_spent
         bonus_added = int(final_total * 0.05)
 
-        cursor = db.execute("INSERT INTO orders (customer_id, total) VALUES (?, ?)", (customer_id, final_total))
+        cursor = db.execute(
+            """
+            INSERT INTO orders (customer_id, subtotal, discount, total, bonus_spent, bonus_added)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (customer_id, total, bonus_spent, final_total, bonus_spent, bonus_added),
+        )
         order_id = cursor.lastrowid
         db.executemany(
             "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
@@ -251,6 +283,109 @@ def create_order(payload):
             "total": final_total,
             "bonus_added": bonus_added,
         }
+
+
+def get_order(order_id):
+    with get_connection() as db:
+        return get_order_from_db(db, order_id)
+
+
+def get_order_from_db(db, order_id):
+    order = db.execute(
+        """
+        SELECT o.id, o.created_at, o.closed_at, o.status, o.subtotal, o.discount, o.total,
+               o.bonus_spent, o.bonus_added, c.full_name AS customer, c.phone AS customer_phone
+        FROM orders o
+        JOIN customers c ON c.id = o.customer_id
+        WHERE o.id = ?
+        """,
+        (order_id,),
+    ).fetchone()
+    if not order:
+        raise ValueError("Заказ не найден")
+    items = rows_to_dicts(
+        db.execute(
+            """
+            SELECT oi.product_id, p.name, p.brand, c.name AS category, oi.quantity, oi.price,
+                   oi.quantity * oi.price AS line_total
+            FROM order_items oi
+            JOIN products p ON p.id = oi.product_id
+            JOIN categories c ON c.id = p.category_id
+            WHERE oi.order_id = ?
+            ORDER BY p.name
+            """,
+            (order_id,),
+        )
+    )
+    return {"order": dict(order), "items": items}
+
+
+def close_order(order_id, status):
+    if status not in ("Отменен", "Возврат"):
+        raise ValueError("Некорректный статус заказа")
+
+    with get_connection() as db:
+        order = db.execute(
+            "SELECT id, customer_id, status, bonus_spent, bonus_added FROM orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if not order:
+            raise ValueError("Заказ не найден")
+        if order["status"] in ("Отменен", "Возврат"):
+            raise ValueError("Заказ уже закрыт")
+
+        items = rows_to_dicts(
+            db.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", (order_id,))
+        )
+        for item in items:
+            db.execute(
+                "UPDATE products SET stock = stock + ? WHERE id = ?",
+                (item["quantity"], item["product_id"]),
+            )
+        db.execute(
+            """
+            UPDATE customers
+            SET bonus_points = MAX(0, bonus_points + ? - ?)
+            WHERE id = ?
+            """,
+            (order["bonus_spent"], order["bonus_added"], order["customer_id"]),
+        )
+        db.execute(
+            "UPDATE orders SET status = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, order_id),
+        )
+        return get_order_from_db(db, order_id)
+
+
+def delete_order(order_id):
+    with get_connection() as db:
+        order = db.execute(
+            "SELECT id, customer_id, status, bonus_spent, bonus_added FROM orders WHERE id = ?",
+            (order_id,),
+        ).fetchone()
+        if not order:
+            raise ValueError("Заказ не найден")
+
+        if order["status"] not in ("Отменен", "Возврат"):
+            items = rows_to_dicts(
+                db.execute("SELECT product_id, quantity FROM order_items WHERE order_id = ?", (order_id,))
+            )
+            for item in items:
+                db.execute(
+                    "UPDATE products SET stock = stock + ? WHERE id = ?",
+                    (item["quantity"], item["product_id"]),
+                )
+            db.execute(
+                """
+                UPDATE customers
+                SET bonus_points = MAX(0, bonus_points + ? - ?)
+                WHERE id = ?
+                """,
+                (order["bonus_spent"], order["bonus_added"], order["customer_id"]),
+            )
+
+        db.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        return {"deleted": True, "id": order_id}
 
 
 def create_product(payload):
@@ -315,7 +450,8 @@ class SportStoreHandler(BaseHTTPRequestHandler):
                         rows_to_dicts(
                             db.execute(
                                 """
-                                SELECT o.id, o.created_at, o.status, o.total, c.full_name AS customer
+                                SELECT o.id, o.created_at, o.closed_at, o.status, o.subtotal, o.discount,
+                                       o.total, o.bonus_spent, o.bonus_added, c.full_name AS customer
                                 FROM orders o
                                 JOIN customers c ON c.id = o.customer_id
                                 ORDER BY o.id DESC
@@ -323,8 +459,13 @@ class SportStoreHandler(BaseHTTPRequestHandler):
                             )
                         )
                     )
+            elif parsed.path.startswith("/api/orders/"):
+                order_id = self.extract_order_id(parsed.path)
+                self.send_json(get_order(order_id))
             else:
                 self.serve_static(parsed.path)
+        except ValueError as error:
+            self.send_error_json(str(error), 404)
         except Exception as error:
             self.send_error_json(str(error), 500)
 
@@ -334,6 +475,12 @@ class SportStoreHandler(BaseHTTPRequestHandler):
             payload = read_json(self)
             if parsed.path == "/api/orders":
                 self.send_json(create_order(payload), 201)
+            elif parsed.path.startswith("/api/orders/") and parsed.path.endswith("/cancel"):
+                order_id = self.extract_order_id(parsed.path)
+                self.send_json(close_order(order_id, "Отменен"))
+            elif parsed.path.startswith("/api/orders/") and parsed.path.endswith("/return"):
+                order_id = self.extract_order_id(parsed.path)
+                self.send_json(close_order(order_id, "Возврат"))
             elif parsed.path == "/api/products":
                 self.send_json(create_product(payload), 201)
             elif parsed.path == "/api/customers":
@@ -344,6 +491,25 @@ class SportStoreHandler(BaseHTTPRequestHandler):
             self.send_error_json(str(error), 400)
         except Exception as error:
             self.send_error_json(str(error), 500)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path.startswith("/api/orders/"):
+                order_id = self.extract_order_id(parsed.path)
+                self.send_json(delete_order(order_id))
+            else:
+                self.send_error_json("Маршрут не найден", 404)
+        except ValueError as error:
+            self.send_error_json(str(error), 400)
+        except Exception as error:
+            self.send_error_json(str(error), 500)
+
+    def extract_order_id(self, path):
+        parts = path.strip("/").split("/")
+        if len(parts) < 3 or parts[0] != "api" or parts[1] != "orders":
+            raise ValueError("Маршрут не найден")
+        return int(parts[2])
 
     def serve_static(self, path):
         if path == "/":

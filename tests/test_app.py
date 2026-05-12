@@ -78,6 +78,48 @@ class SportStoreTests(unittest.TestCase):
                 }
             )
 
+    def test_cancel_order_restores_stock_and_closes_order(self):
+        product = app.product_list({})[0]
+        with app.get_connection() as db:
+            customer = db.execute("SELECT * FROM customers LIMIT 1").fetchone()
+
+        created = app.create_order(
+            {
+                "customer_id": customer["id"],
+                "items": [{"product_id": product["id"], "quantity": 1}],
+            }
+        )
+        closed = app.close_order(created["id"], "Отменен")
+
+        with app.get_connection() as db:
+            updated_product = db.execute("SELECT stock FROM products WHERE id = ?", (product["id"],)).fetchone()
+            order = db.execute("SELECT status FROM orders WHERE id = ?", (created["id"],)).fetchone()
+
+        self.assertEqual(closed["order"]["status"], "Отменен")
+        self.assertEqual(order["status"], "Отменен")
+        self.assertEqual(updated_product["stock"], product["stock"])
+
+    def test_delete_active_order_restores_stock_and_removes_order(self):
+        product = app.product_list({})[0]
+        with app.get_connection() as db:
+            customer = db.execute("SELECT * FROM customers LIMIT 1").fetchone()
+
+        created = app.create_order(
+            {
+                "customer_id": customer["id"],
+                "items": [{"product_id": product["id"], "quantity": 1}],
+            }
+        )
+        result = app.delete_order(created["id"])
+
+        with app.get_connection() as db:
+            updated_product = db.execute("SELECT stock FROM products WHERE id = ?", (product["id"],)).fetchone()
+            order_count = db.execute("SELECT COUNT(*) FROM orders WHERE id = ?", (created["id"],)).fetchone()[0]
+
+        self.assertTrue(result["deleted"])
+        self.assertEqual(order_count, 0)
+        self.assertEqual(updated_product["stock"], product["stock"])
+
 
 if __name__ == "__main__":
     unittest.main()

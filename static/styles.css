@@ -370,7 +370,8 @@ tr:last-child td {
 }
 
 .list-item,
-.cart-row {
+.cart-row,
+.order-card {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 10px;
@@ -436,6 +437,126 @@ tr:last-child td {
 
 .cart-row {
   grid-template-columns: 1fr 82px 42px;
+}
+
+.order-card {
+  align-items: start;
+}
+
+.order-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.order-money {
+  margin-top: 8px;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.order-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.order-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 13px;
+}
+
+.danger-button {
+  color: #8c2d2d;
+  border-color: #efc5c5;
+  background: #fff7f7;
+}
+
+.danger-button:hover {
+  border-color: #d98b8b;
+  background: #fff1f1;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-active {
+  color: var(--green-dark);
+  background: #e8f5ed;
+}
+
+.status-cancelled {
+  color: #8c2d2d;
+  background: #fff1f1;
+}
+
+.status-returned {
+  color: #7a4a13;
+  background: #fff4e4;
+}
+
+.order-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f8fbf8;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.detail-grid div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.detail-grid span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.order-items {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.order-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 
 .bonus-field {
@@ -567,8 +688,18 @@ dialog::backdrop {
   .split,
   .order-layout,
   .customer-layout,
-  .toolbar {
+  .toolbar,
+  .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .order-card,
+  .order-item {
+    grid-template-columns: 1fr;
+  }
+
+  .order-actions {
+    justify-content: flex-start;
   }
 }
 

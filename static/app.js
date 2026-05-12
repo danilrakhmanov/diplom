@@ -140,12 +140,28 @@ function renderCustomers() {
 function renderOrders() {
   $("#ordersList").innerHTML = state.orders.length
     ? state.orders
-        .map((order) =>
-          listItem(
-            `Заказ №${order.id} · ${currency.format(order.total)}`,
-            `${escapeHtml(order.customer)} · ${escapeHtml(order.status)} · ${new Date(order.created_at).toLocaleString("ru-RU")}`,
-          ),
-        )
+        .map((order) => {
+          const isClosed = ["Отменен", "Возврат"].includes(order.status);
+          return `
+            <article class="order-card">
+              <div>
+                <div class="order-title">
+                  <strong>Заказ №${order.id}</strong>
+                  <span class="status ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
+                </div>
+                <div class="subtext">
+                  ${escapeHtml(order.customer)} · ${new Date(order.created_at).toLocaleString("ru-RU")}
+                </div>
+                <div class="order-money">${currency.format(order.total)}</div>
+              </div>
+              <div class="order-actions">
+                <button data-view-order="${order.id}">Просмотр</button>
+                <button data-cancel-order="${order.id}" ${isClosed ? "disabled" : ""}>Отменить</button>
+                <button data-return-order="${order.id}" ${isClosed ? "disabled" : ""}>Возврат</button>
+                <button class="danger-button" data-delete-order="${order.id}">Удалить</button>
+              </div>
+            </article>`;
+        })
         .join("")
     : empty("Заказов пока нет");
 }
@@ -204,6 +220,68 @@ function listItem(title, meta) {
     </article>`;
 }
 
+function statusClass(status) {
+  if (status === "Отменен") return "status-cancelled";
+  if (status === "Возврат") return "status-returned";
+  return "status-active";
+}
+
+async function openOrder(orderId) {
+  const details = await api(`/api/orders/${orderId}`);
+  const order = details.order;
+  $("#orderDialogTitle").textContent = `Заказ №${order.id}`;
+  $("#orderDetails").innerHTML = `
+    <div class="order-detail-head">
+      <div>
+        <span class="subtext">Покупатель</span>
+        <strong>${escapeHtml(order.customer)}</strong>
+        <div class="subtext">${escapeHtml(order.customer_phone)}</div>
+      </div>
+      <span class="status ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
+    </div>
+    <div class="detail-grid">
+      <div><span>Дата</span><strong>${new Date(order.created_at).toLocaleString("ru-RU")}</strong></div>
+      <div><span>Сумма товаров</span><strong>${currency.format(order.subtotal)}</strong></div>
+      <div><span>Скидка</span><strong>${currency.format(order.discount)}</strong></div>
+      <div><span>Итого</span><strong>${currency.format(order.total)}</strong></div>
+      <div><span>Списано бонусов</span><strong>${order.bonus_spent}</strong></div>
+      <div><span>Начислено бонусов</span><strong>${order.bonus_added}</strong></div>
+    </div>
+    <div class="order-items">
+      ${details.items
+        .map(
+          (item) => `
+            <div class="order-item">
+              <div>
+                <strong>${escapeHtml(item.name)}</strong>
+                <div class="subtext">${escapeHtml(item.category)} · ${escapeHtml(item.brand)}</div>
+              </div>
+              <div>${item.quantity} × ${currency.format(item.price)}</div>
+              <strong>${currency.format(item.line_total)}</strong>
+            </div>`,
+        )
+        .join("")}
+    </div>
+  `;
+  $("#orderDialog").showModal();
+}
+
+async function closeOrder(orderId, action) {
+  const text = action === "cancel" ? "отменить заказ" : "оформить возврат";
+  if (!confirm(`Вы действительно хотите ${text} №${orderId}? Товары вернутся на склад.`)) return;
+  const path = action === "cancel" ? "cancel" : "return";
+  await api(`/api/orders/${orderId}/${path}`, { method: "POST" });
+  await refreshAll();
+  showToast(action === "cancel" ? "Заказ отменен" : "Возврат оформлен");
+}
+
+async function deleteOrder(orderId) {
+  if (!confirm(`Удалить заказ №${orderId}? Если заказ активен, товары вернутся на склад.`)) return;
+  await api(`/api/orders/${orderId}`, { method: "DELETE" });
+  await refreshAll();
+  showToast("Заказ удален");
+}
+
 function stockLabel(stock) {
   if (stock <= 0) return "нет в наличии";
   if (stock <= 5) return `${stock} · критично`;
@@ -248,6 +326,42 @@ document.addEventListener("click", async (event) => {
     state.cart.delete(Number(removeButton.dataset.remove));
     renderCart();
   }
+
+  const viewOrderButton = event.target.closest("[data-view-order]");
+  if (viewOrderButton) {
+    try {
+      await openOrder(Number(viewOrderButton.dataset.viewOrder));
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
+
+  const cancelOrderButton = event.target.closest("[data-cancel-order]");
+  if (cancelOrderButton && !cancelOrderButton.disabled) {
+    try {
+      await closeOrder(Number(cancelOrderButton.dataset.cancelOrder), "cancel");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
+
+  const returnOrderButton = event.target.closest("[data-return-order]");
+  if (returnOrderButton && !returnOrderButton.disabled) {
+    try {
+      await closeOrder(Number(returnOrderButton.dataset.returnOrder), "return");
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
+
+  const deleteOrderButton = event.target.closest("[data-delete-order]");
+  if (deleteOrderButton) {
+    try {
+      await deleteOrder(Number(deleteOrderButton.dataset.deleteOrder));
+    } catch (error) {
+      showToast(error.message, true);
+    }
+  }
 });
 
 document.addEventListener("input", (event) => {
@@ -268,6 +382,7 @@ $("#categoryFilter").addEventListener("change", () => refreshAll().catch((error)
 
 $("#openProductForm").addEventListener("click", () => $("#productDialog").showModal());
 $("#closeProductForm").addEventListener("click", () => $("#productDialog").close());
+$("#closeOrderDialog").addEventListener("click", () => $("#orderDialog").close());
 
 $("#productForm").addEventListener("submit", async (event) => {
   event.preventDefault();
