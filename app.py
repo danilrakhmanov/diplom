@@ -193,11 +193,14 @@ def dashboard():
 def create_order(payload):
     customer_id = int(payload.get("customer_id", 0))
     items = payload.get("items", [])
+    requested_bonus_spend = int(float(payload.get("bonus_to_spend", 0) or 0))
     if not customer_id or not items:
         raise ValueError("Не выбран покупатель или товары")
+    if requested_bonus_spend < 0:
+        raise ValueError("Количество бонусов для списания не может быть отрицательным")
 
     with get_connection() as db:
-        customer = db.execute("SELECT id FROM customers WHERE id = ?", (customer_id,)).fetchone()
+        customer = db.execute("SELECT id, bonus_points FROM customers WHERE id = ?", (customer_id,)).fetchone()
         if not customer:
             raise ValueError("Покупатель не найден")
 
@@ -224,7 +227,12 @@ def create_order(payload):
             total += line_total
             normalized_items.append((product_id, quantity, product["price"]))
 
-        cursor = db.execute("INSERT INTO orders (customer_id, total) VALUES (?, ?)", (customer_id, total))
+        max_bonus_spend = int(total * 0.30)
+        bonus_spent = min(requested_bonus_spend, customer["bonus_points"], max_bonus_spend)
+        final_total = total - bonus_spent
+        bonus_added = int(final_total * 0.05)
+
+        cursor = db.execute("INSERT INTO orders (customer_id, total) VALUES (?, ?)", (customer_id, final_total))
         order_id = cursor.lastrowid
         db.executemany(
             "INSERT INTO order_items (order_id, product_id, quantity, price) VALUES (?, ?, ?, ?)",
@@ -232,9 +240,17 @@ def create_order(payload):
         )
         for product_id, quantity, _ in normalized_items:
             db.execute("UPDATE products SET stock = stock - ? WHERE id = ?", (quantity, product_id))
-        bonus = int(total // 100)
-        db.execute("UPDATE customers SET bonus_points = bonus_points + ? WHERE id = ?", (bonus, customer_id))
-        return {"id": order_id, "total": total, "bonus_added": bonus}
+        db.execute(
+            "UPDATE customers SET bonus_points = bonus_points - ? + ? WHERE id = ?",
+            (bonus_spent, bonus_added, customer_id),
+        )
+        return {
+            "id": order_id,
+            "subtotal": total,
+            "discount": bonus_spent,
+            "total": final_total,
+            "bonus_added": bonus_added,
+        }
 
 
 def create_product(payload):

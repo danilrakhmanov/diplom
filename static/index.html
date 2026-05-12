@@ -85,6 +85,14 @@
             <select id="orderCustomer"></select>
           </label>
           <div id="cart" class="cart"></div>
+          <label class="bonus-field">Списать бонусы
+            <input id="bonusSpend" type="number" min="0" step="1" value="0">
+          </label>
+          <div class="summary">
+            <div><span>Сумма товаров</span><strong id="cartSubtotal">0 ₽</strong></div>
+            <div><span>Скидка бонусами</span><strong id="cartDiscount">0 ₽</strong></div>
+            <div><span>Будет начислено</span><strong id="cartBonusEarned">0</strong></div>
+          </div>
           <div class="total-row">
             <span>Итого</span>
             <strong id="cartTotal">0 ₽</strong>

@@ -114,9 +114,16 @@ function renderProducts() {
 }
 
 function renderCustomers() {
+  const selectedCustomerId = $("#orderCustomer").value;
   $("#orderCustomer").innerHTML = state.customers
-    .map((customer) => `<option value="${customer.id}">${escapeHtml(customer.full_name)}</option>`)
+    .map(
+      (customer) =>
+        `<option value="${customer.id}">${escapeHtml(customer.full_name)} · ${customer.bonus_points} бонусов</option>`,
+    )
     .join("");
+  if (selectedCustomerId) {
+    $("#orderCustomer").value = selectedCustomerId;
+  }
 
   $("#customersList").innerHTML = state.customers.length
     ? state.customers
@@ -145,6 +152,7 @@ function renderOrders() {
 
 function renderCart() {
   const cart = $("#cart");
+  const selectedCustomer = state.customers.find((customer) => customer.id === Number($("#orderCustomer").value));
   const entries = [...state.cart.entries()]
     .map(([id, quantity]) => [state.products.find((product) => product.id === id), quantity])
     .filter(([product]) => product);
@@ -165,7 +173,21 @@ function renderCart() {
         .join("")
     : empty("Добавьте товары из каталога");
 
-  const total = entries.reduce((sum, [product, quantity]) => sum + product.price * quantity, 0);
+  const subtotal = entries.reduce((sum, [product, quantity]) => sum + product.price * quantity, 0);
+  const bonusInput = $("#bonusSpend");
+  const availableBonus = selectedCustomer?.bonus_points || 0;
+  const maxBonusSpend = Math.floor(subtotal * 0.3);
+  const discount = Math.min(Number(bonusInput.value || 0), availableBonus, maxBonusSpend);
+  bonusInput.max = Math.min(availableBonus, maxBonusSpend);
+  if (Number(bonusInput.value || 0) !== discount) {
+    bonusInput.value = discount;
+  }
+
+  const total = subtotal - discount;
+  const bonusEarned = Math.floor(total * 0.05);
+  $("#cartSubtotal").textContent = currency.format(subtotal);
+  $("#cartDiscount").textContent = currency.format(discount);
+  $("#cartBonusEarned").textContent = `${bonusEarned} бонусов`;
   $("#cartTotal").textContent = currency.format(total);
 }
 
@@ -223,7 +245,12 @@ document.addEventListener("input", (event) => {
     state.cart.set(Number(event.target.dataset.quantity), Number(event.target.value));
     renderCart();
   }
+  if (event.target.matches("#bonusSpend")) {
+    renderCart();
+  }
 });
+
+$("#orderCustomer").addEventListener("change", renderCart);
 
 $("#refreshButton").addEventListener("click", () => refreshAll().then(() => showToast("Данные обновлены")));
 $("#productSearch").addEventListener("input", () => refreshAll().catch((error) => showToast(error.message, true)));
@@ -261,13 +288,15 @@ $("#submitOrder").addEventListener("click", async () => {
   try {
     const items = [...state.cart.entries()].map(([product_id, quantity]) => ({ product_id, quantity }));
     const customerId = Number($("#orderCustomer").value);
+    const bonusToSpend = Number($("#bonusSpend").value || 0);
     const result = await api("/api/orders", {
       method: "POST",
-      body: JSON.stringify({ customer_id: customerId, items }),
+      body: JSON.stringify({ customer_id: customerId, items, bonus_to_spend: bonusToSpend }),
     });
     state.cart.clear();
+    $("#bonusSpend").value = 0;
     await refreshAll();
-    showToast(`Заказ №${result.id} оформлен`);
+    showToast(`Заказ №${result.id} оформлен, начислено ${result.bonus_added} бонусов`);
   } catch (error) {
     showToast(error.message, true);
   }

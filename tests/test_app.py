@@ -36,6 +36,34 @@ class SportStoreTests(unittest.TestCase):
         self.assertGreater(result["total"], 0)
         self.assertEqual(updated_product["stock"], product["stock"] - 2)
         self.assertEqual(updated_customer["bonus_points"], customer["bonus_points"] + result["bonus_added"])
+        self.assertEqual(result["bonus_added"], int(result["total"] * 0.05))
+
+    def test_create_order_spends_bonus_points_with_thirty_percent_limit(self):
+        product = next(item for item in app.product_list({}) if item["price"] >= 3000)
+        with app.get_connection() as db:
+            customer = db.execute("SELECT * FROM customers WHERE bonus_points > 0 LIMIT 1").fetchone()
+
+        subtotal = product["price"]
+        max_discount = int(subtotal * 0.30)
+        result = app.create_order(
+            {
+                "customer_id": customer["id"],
+                "items": [{"product_id": product["id"], "quantity": 1}],
+                "bonus_to_spend": customer["bonus_points"],
+            }
+        )
+
+        expected_discount = min(customer["bonus_points"], max_discount)
+        expected_total = subtotal - expected_discount
+        expected_bonus = int(expected_total * 0.05)
+
+        with app.get_connection() as db:
+            updated_customer = db.execute("SELECT bonus_points FROM customers WHERE id = ?", (customer["id"],)).fetchone()
+
+        self.assertEqual(result["discount"], expected_discount)
+        self.assertEqual(result["total"], expected_total)
+        self.assertEqual(result["bonus_added"], expected_bonus)
+        self.assertEqual(updated_customer["bonus_points"], customer["bonus_points"] - expected_discount + expected_bonus)
 
     def test_create_order_blocks_when_stock_is_not_enough(self):
         product = app.product_list({})[0]
