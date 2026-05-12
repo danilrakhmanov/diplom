@@ -96,18 +96,18 @@ function renderCategories() {
 function renderProducts() {
   $("#productsTable").innerHTML = state.products
     .map((product) => {
-      const stockClass = product.stock <= 10 ? "stock-low" : "";
+      const stockClass = product.stock <= 10 ? "stock-low" : "stock-ok";
       return `
         <tr>
           <td>
             <strong>${escapeHtml(product.name)}</strong>
             <div class="subtext">${escapeHtml(product.description || "Без описания")}</div>
           </td>
-          <td>${escapeHtml(product.category)}</td>
-          <td>${escapeHtml(product.brand)}</td>
+          <td><span class="category-pill">${escapeHtml(product.category)}</span></td>
+          <td><span class="brand-pill">${escapeHtml(product.brand)}</span></td>
           <td>${currency.format(product.price)}</td>
-          <td class="${stockClass}">${product.stock}</td>
-          <td><button data-add="${product.id}" title="Добавить в заказ">+</button></td>
+          <td><span class="stock-badge ${stockClass}">${stockLabel(product.stock)}</span></td>
+          <td><button class="add-button" data-add="${product.id}" title="Добавить в заказ">+</button></td>
         </tr>`;
     })
     .join("");
@@ -185,6 +185,9 @@ function renderCart() {
 
   const total = subtotal - discount;
   const bonusEarned = Math.floor(total * 0.05);
+  const cartCount = entries.reduce((sum, [, quantity]) => sum + quantity, 0);
+  $("#cartCount").textContent = cartCount;
+  $("#cartCount").classList.toggle("active", cartCount > 0);
   $("#cartSubtotal").textContent = currency.format(subtotal);
   $("#cartDiscount").textContent = currency.format(discount);
   $("#cartBonusEarned").textContent = `${bonusEarned} бонусов`;
@@ -199,6 +202,13 @@ function listItem(title, meta) {
         <div class="subtext">${meta}</div>
       </div>
     </article>`;
+}
+
+function stockLabel(stock) {
+  if (stock <= 0) return "нет в наличии";
+  if (stock <= 5) return `${stock} · критично`;
+  if (stock <= 10) return `${stock} · мало`;
+  return `${stock} · в наличии`;
 }
 
 function empty(text) {
@@ -228,8 +238,8 @@ document.addEventListener("click", async (event) => {
     const product = state.products.find((item) => item.id === id);
     if (product?.stock > 0) {
       state.cart.set(id, (state.cart.get(id) || 0) + 1);
-      setView("orders");
       renderCart();
+      showToast(`${product.name} добавлен в заказ`);
     }
   }
 
@@ -295,6 +305,7 @@ $("#submitOrder").addEventListener("click", async () => {
     });
     state.cart.clear();
     $("#bonusSpend").value = 0;
+    renderCart();
     await refreshAll();
     showToast(`Заказ №${result.id} оформлен, начислено ${result.bonus_added} бонусов`);
   } catch (error) {

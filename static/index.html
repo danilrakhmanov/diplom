@@ -10,13 +10,16 @@
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark">SS</span>
-      <span>SportStore IS</span>
+      <span>
+        <strong>SportStore IS</strong>
+        <small>учет продаж и склада</small>
+      </span>
     </div>
     <nav class="nav" aria-label="Разделы">
-      <button class="nav-button active" data-view="dashboard">Обзор</button>
-      <button class="nav-button" data-view="catalog">Каталог</button>
-      <button class="nav-button" data-view="orders">Продажи</button>
-      <button class="nav-button" data-view="customers">Клиенты</button>
+      <button class="nav-button active" data-view="dashboard"><span>01</span>Обзор</button>
+      <button class="nav-button" data-view="catalog"><span>02</span>Каталог</button>
+      <button class="nav-button" data-view="orders"><span>03</span>Продажи <b id="cartCount">0</b></button>
+      <button class="nav-button" data-view="customers"><span>04</span>Клиенты</button>
     </nav>
   </aside>
 
@@ -56,7 +59,7 @@
       <div class="toolbar">
         <input id="productSearch" type="search" placeholder="Поиск товара или бренда">
         <select id="categoryFilter"></select>
-        <button id="openProductForm">Добавить товар</button>
+        <button id="openProductForm" class="primary">Добавить товар</button>
       </div>
       <div class="table-wrap">
         <table>
