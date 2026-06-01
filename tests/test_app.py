@@ -120,6 +120,13 @@ class SportStoreTests(unittest.TestCase):
         self.assertEqual(order_count, 0)
         self.assertEqual(updated_product["stock"], product["stock"])
 
+    def test_seeded_user_can_login(self):
+        token, user = app.login_user({"username": "admin", "password": "admin123"})
+
+        self.assertTrue(token)
+        self.assertEqual(user["username"], "admin")
+        self.assertEqual(user["role"], "admin")
+
 
 if __name__ == "__main__":
     unittest.main()

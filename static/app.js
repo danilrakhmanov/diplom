@@ -3,6 +3,7 @@ const state = {
   customers: [],
   orders: [],
   categories: [],
+  currentUser: null,
   cart: new Map(),
 };
 
@@ -21,6 +22,9 @@ async function api(path, options = {}) {
   });
   const payload = await response.json();
   if (!response.ok) {
+    if (response.status === 401) {
+      lockApp();
+    }
     throw new Error(payload.error || "Ошибка запроса");
   }
   return payload;
@@ -39,6 +43,27 @@ function setView(viewId) {
   document.querySelectorAll(".nav-button").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === viewId);
   });
+}
+
+function applySession(user) {
+  state.currentUser = user;
+  document.body.classList.toggle("locked", !user);
+  if (user) {
+    $("#currentUserName").textContent = user.full_name;
+    $("#currentUserRole").textContent = user.role === "admin" ? "Администратор" : "Продавец";
+  }
+}
+
+function lockApp() {
+  applySession(null);
+}
+
+async function initApp() {
+  const session = await api("/api/session");
+  applySession(session.user);
+  if (session.user) {
+    await refreshAll();
+  }
 }
 
 async function refreshAll() {
@@ -150,7 +175,7 @@ function renderOrders() {
                   <span class="status ${statusClass(order.status)}">${escapeHtml(order.status)}</span>
                 </div>
                 <div class="subtext">
-                  ${escapeHtml(order.customer)} · ${new Date(order.created_at).toLocaleString("ru-RU")}
+                  ${escapeHtml(order.customer)} · ${escapeHtml(order.employee || "сотрудник не указан")} · ${new Date(order.created_at).toLocaleString("ru-RU")}
                 </div>
                 <div class="order-money">${currency.format(order.total)}</div>
               </div>
@@ -241,6 +266,7 @@ async function openOrder(orderId) {
     </div>
     <div class="detail-grid">
       <div><span>Дата</span><strong>${new Date(order.created_at).toLocaleString("ru-RU")}</strong></div>
+      <div><span>Сотрудник</span><strong>${escapeHtml(order.employee || "не указан")}</strong></div>
       <div><span>Сумма товаров</span><strong>${currency.format(order.subtotal)}</strong></div>
       <div><span>Скидка</span><strong>${currency.format(order.discount)}</strong></div>
       <div><span>Итого</span><strong>${currency.format(order.total)}</strong></div>
@@ -376,6 +402,29 @@ document.addEventListener("input", (event) => {
 
 $("#orderCustomer").addEventListener("change", renderCart);
 
+$("#loginForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    const result = await api("/api/login", { method: "POST", body: JSON.stringify(formPayload(event.target)) });
+    event.target.reset();
+    applySession(result.user);
+    await refreshAll();
+    showToast("Вход выполнен");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+});
+
+$("#logoutButton").addEventListener("click", async () => {
+  try {
+    await api("/api/logout", { method: "POST" });
+  } finally {
+    state.cart.clear();
+    renderCart();
+    lockApp();
+  }
+});
+
 $("#refreshButton").addEventListener("click", () => refreshAll().then(() => showToast("Данные обновлены")));
 $("#productSearch").addEventListener("input", () => refreshAll().catch((error) => showToast(error.message, true)));
 $("#categoryFilter").addEventListener("change", () => refreshAll().catch((error) => showToast(error.message, true)));
@@ -428,4 +477,4 @@ $("#submitOrder").addEventListener("click", async () => {
   }
 });
 
-refreshAll().catch((error) => showToast(error.message, true));
+initApp().catch((error) => showToast(error.message, true));

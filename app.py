@@ -2,6 +2,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from contextlib import contextmanager
+from http.cookies import SimpleCookie
+import hashlib
+import secrets
 import json
 import mimetypes
 import sqlite3
@@ -11,6 +14,17 @@ import sys
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "sportstore.db"
 STATIC_DIR = BASE_DIR / "static"
+
+
+def hash_password(password, salt=None):
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120000)
+    return f"{salt}${digest.hex()}"
+
+
+def verify_password(password, stored_hash):
+    salt, expected = stored_hash.split("$", 1)
+    return hash_password(password, salt).split("$", 1)[1] == expected
 
 
 @contextmanager
@@ -56,9 +70,26 @@ def init_db():
                 bonus_points INTEGER NOT NULL DEFAULT 0 CHECK (bonus_points >= 0)
             );
 
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                full_name TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'seller',
+                is_active INTEGER NOT NULL DEFAULT 1
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 customer_id INTEGER NOT NULL,
+                employee_id INTEGER,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 status TEXT NOT NULL DEFAULT 'Оформлен',
                 subtotal REAL NOT NULL DEFAULT 0 CHECK (subtotal >= 0),
@@ -67,7 +98,8 @@ def init_db():
                 bonus_spent INTEGER NOT NULL DEFAULT 0 CHECK (bonus_spent >= 0),
                 bonus_added INTEGER NOT NULL DEFAULT 0 CHECK (bonus_added >= 0),
                 closed_at TEXT,
-                FOREIGN KEY (customer_id) REFERENCES customers(id)
+                FOREIGN KEY (customer_id) REFERENCES customers(id),
+                FOREIGN KEY (employee_id) REFERENCES users(id)
             );
 
             CREATE TABLE IF NOT EXISTS order_items (
@@ -83,6 +115,7 @@ def init_db():
         )
 
         migrate_db(db)
+        seed_users(db)
 
         if db.execute("SELECT COUNT(*) FROM categories").fetchone()[0] == 0:
             seed_database(db)
@@ -96,12 +129,26 @@ def migrate_db(db):
         "bonus_spent": "ALTER TABLE orders ADD COLUMN bonus_spent INTEGER NOT NULL DEFAULT 0 CHECK (bonus_spent >= 0)",
         "bonus_added": "ALTER TABLE orders ADD COLUMN bonus_added INTEGER NOT NULL DEFAULT 0 CHECK (bonus_added >= 0)",
         "closed_at": "ALTER TABLE orders ADD COLUMN closed_at TEXT",
+        "employee_id": "ALTER TABLE orders ADD COLUMN employee_id INTEGER",
     }
     for column, statement in migrations.items():
         if column not in order_columns:
             db.execute(statement)
     db.execute("UPDATE orders SET subtotal = total WHERE subtotal = 0 AND total > 0")
     db.execute("UPDATE orders SET status = 'Оформлен' WHERE status = 'Новый'")
+
+
+def seed_users(db):
+    if db.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0:
+        return
+    users = [
+        ("admin", hash_password("admin123"), "Администратор", "admin"),
+        ("seller", hash_password("seller123"), "Продавец-консультант", "seller"),
+    ]
+    db.executemany(
+        "INSERT INTO users (username, password_hash, full_name, role) VALUES (?, ?, ?, ?)",
+        users,
+    )
 
 
 def seed_database(db):
@@ -216,7 +263,7 @@ def dashboard():
         return {"stats": stats, "top_products": top_products, "low_stock": low_stock}
 
 
-def create_order(payload):
+def create_order(payload, employee_id=None):
     customer_id = int(payload.get("customer_id", 0))
     items = payload.get("items", [])
     requested_bonus_spend = int(float(payload.get("bonus_to_spend", 0) or 0))
@@ -260,10 +307,10 @@ def create_order(payload):
 
         cursor = db.execute(
             """
-            INSERT INTO orders (customer_id, subtotal, discount, total, bonus_spent, bonus_added)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO orders (customer_id, employee_id, subtotal, discount, total, bonus_spent, bonus_added)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (customer_id, total, bonus_spent, final_total, bonus_spent, bonus_added),
+            (customer_id, employee_id, total, bonus_spent, final_total, bonus_spent, bonus_added),
         )
         order_id = cursor.lastrowid
         db.executemany(
@@ -294,9 +341,11 @@ def get_order_from_db(db, order_id):
     order = db.execute(
         """
         SELECT o.id, o.created_at, o.closed_at, o.status, o.subtotal, o.discount, o.total,
-               o.bonus_spent, o.bonus_added, c.full_name AS customer, c.phone AS customer_phone
+               o.bonus_spent, o.bonus_added, c.full_name AS customer, c.phone AS customer_phone,
+               u.full_name AS employee, u.role AS employee_role
         FROM orders o
         JOIN customers c ON c.id = o.customer_id
+        LEFT JOIN users u ON u.id = o.employee_id
         WHERE o.id = ?
         """,
         (order_id,),
@@ -430,11 +479,42 @@ def create_customer(payload):
         return {"id": cursor.lastrowid}
 
 
+def login_user(payload):
+    username = payload.get("username", "").strip()
+    password = payload.get("password", "")
+    if not username or not password:
+        raise ValueError("Введите логин и пароль")
+
+    with get_connection() as db:
+        user = db.execute(
+            "SELECT id, username, password_hash, full_name, role FROM users WHERE username = ? AND is_active = 1",
+            (username,),
+        ).fetchone()
+        if not user or not verify_password(password, user["password_hash"]):
+            raise ValueError("Неверный логин или пароль")
+        token = secrets.token_urlsafe(32)
+        db.execute("INSERT INTO sessions (token, user_id) VALUES (?, ?)", (token, user["id"]))
+        return token, public_user(user)
+
+
+def public_user(user):
+    return {
+        "id": user["id"],
+        "username": user["username"],
+        "full_name": user["full_name"],
+        "role": user["role"],
+    }
+
+
 class SportStoreHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path == "/api/dashboard":
+            if parsed.path == "/api/session":
+                self.send_json({"user": self.current_user()})
+            elif parsed.path.startswith("/api/") and not self.current_user():
+                self.send_error_json("Требуется авторизация", 401)
+            elif parsed.path == "/api/dashboard":
                 self.send_json(dashboard())
             elif parsed.path == "/api/products":
                 self.send_json(product_list(parse_qs(parsed.query)))
@@ -451,9 +531,11 @@ class SportStoreHandler(BaseHTTPRequestHandler):
                             db.execute(
                                 """
                                 SELECT o.id, o.created_at, o.closed_at, o.status, o.subtotal, o.discount,
-                                       o.total, o.bonus_spent, o.bonus_added, c.full_name AS customer
+                                       o.total, o.bonus_spent, o.bonus_added, c.full_name AS customer,
+                                       u.full_name AS employee
                                 FROM orders o
                                 JOIN customers c ON c.id = o.customer_id
+                                LEFT JOIN users u ON u.id = o.employee_id
                                 ORDER BY o.id DESC
                                 """
                             )
@@ -473,8 +555,17 @@ class SportStoreHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         try:
             payload = read_json(self)
-            if parsed.path == "/api/orders":
-                self.send_json(create_order(payload), 201)
+            if parsed.path == "/api/login":
+                token, user = login_user(payload)
+                self.send_json({"user": user}, 200, {"Set-Cookie": f"session={token}; Path=/; HttpOnly; SameSite=Lax"})
+            elif parsed.path == "/api/logout":
+                self.logout()
+                self.send_json({"ok": True}, 200, {"Set-Cookie": "session=; Path=/; Max-Age=0; SameSite=Lax"})
+            elif parsed.path.startswith("/api/") and not self.current_user():
+                self.send_error_json("Требуется авторизация", 401)
+            elif parsed.path == "/api/orders":
+                user = self.current_user()
+                self.send_json(create_order(payload, user["id"]), 201)
             elif parsed.path.startswith("/api/orders/") and parsed.path.endswith("/cancel"):
                 order_id = self.extract_order_id(parsed.path)
                 self.send_json(close_order(order_id, "Отменен"))
@@ -495,7 +586,9 @@ class SportStoreHandler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         try:
-            if parsed.path.startswith("/api/orders/"):
+            if parsed.path.startswith("/api/") and not self.current_user():
+                self.send_error_json("Требуется авторизация", 401)
+            elif parsed.path.startswith("/api/orders/"):
                 order_id = self.extract_order_id(parsed.path)
                 self.send_json(delete_order(order_id))
             else:
@@ -510,6 +603,30 @@ class SportStoreHandler(BaseHTTPRequestHandler):
         if len(parts) < 3 or parts[0] != "api" or parts[1] != "orders":
             raise ValueError("Маршрут не найден")
         return int(parts[2])
+
+    def current_user(self):
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        token = cookie.get("session")
+        if not token:
+            return None
+        with get_connection() as db:
+            user = db.execute(
+                """
+                SELECT u.id, u.username, u.full_name, u.role
+                FROM sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.token = ? AND u.is_active = 1
+                """,
+                (token.value,),
+            ).fetchone()
+            return public_user(user) if user else None
+
+    def logout(self):
+        cookie = SimpleCookie(self.headers.get("Cookie", ""))
+        token = cookie.get("session")
+        if token:
+            with get_connection() as db:
+                db.execute("DELETE FROM sessions WHERE token = ?", (token.value,))
 
     def serve_static(self, path):
         if path == "/":
@@ -526,10 +643,12 @@ class SportStoreHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def send_json(self, payload, status=200):
+    def send_json(self, payload, status=200, headers=None):
         encoded = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.send_header("Content-Length", str(len(encoded)))
         self.end_headers()
         self.wfile.write(encoded)

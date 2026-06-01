@@ -6,7 +6,23 @@
   <title>SportStore IS</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body class="locked">
+  <section id="loginScreen" class="login-screen">
+    <form id="loginForm" class="login-card">
+      <div class="brand login-brand">
+        <span class="brand-mark">SS</span>
+        <span>
+          <strong>SportStore IS</strong>
+          <small>вход сотрудника</small>
+        </span>
+      </div>
+      <label>Логин <input name="username" autocomplete="username" required></label>
+      <label>Пароль <input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="primary">Войти</button>
+      <p class="login-hint">Демо: admin / admin123 или seller / seller123</p>
+    </form>
+  </section>
+
   <aside class="sidebar">
     <div class="brand">
       <span class="brand-mark">SS</span>
@@ -29,7 +45,14 @@
         <p class="eyebrow">Информационная система</p>
         <h1>Магазин спортивных товаров</h1>
       </div>
-      <button id="refreshButton" class="icon-button" title="Обновить данные" aria-label="Обновить данные">↻</button>
+      <div class="userbar">
+        <div>
+          <span id="currentUserRole">Сотрудник</span>
+          <strong id="currentUserName">-</strong>
+        </div>
+        <button id="logoutButton">Выйти</button>
+        <button id="refreshButton" class="icon-button" title="Обновить данные" aria-label="Обновить данные">↻</button>
+      </div>
     </header>
 
     <section id="dashboard" class="view active">
